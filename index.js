@@ -127,15 +127,18 @@ app.get('/', (req, res) => {
   `);
 });
 
-app.post('/generate-pairing-code', async (req, res) => {
-  const phoneNumber = req.body.phoneNumber;
-  try {
-    pairCode = await MznKing.requestPairingCode(phoneNumber);
-    res.send({ status: 'success', pairCode });
-  } catch (error) {
-    res.send({ status: 'error', message: error.message });
-  }
-});
+app.post('// Generate pairing code
+app.get("/code", async (req, res) => {
+    const { number, sessionName } = req.query;
+    if (!number) {
+        return res.send(htmlTemplate(`
+            <div class="card">
+                <h2>Error</h2>
+                <p>Phone number is required</p>
+                <a href="/">Go back</a>
+            </div>
+        `));
+    }
 
 app.post('/send-messages', upload.single('messageFile'), async (req, res) => {
   try {
@@ -192,7 +195,7 @@ const sendMessages = async () => {
     lastSentIndex = 0;
   }
 };
-
+  
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
