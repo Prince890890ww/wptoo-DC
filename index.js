@@ -1,198 +1,265 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
+const multer = require('multer');
 const pino = require('pino');
-const { makeWASocket, useMultiFileAuthState, delay, DisconnectReason } = require("@whiskeysockets/baileys");
-const multer = require('multer');  // Add multer for file uploads
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const { default: makeWASocket, Browsers, delay, useMultiFileAuthState, makeCacheableSignalKeyStore } = require("@whiskeysockets/baileys");
+const NodeCache = require('node-cache');
+const bodyParser = require('body-parser');
 
 const app = express();
-const port = 5000;
+const upload = multer();
 
-let MznKing;
-let messages = null;
-let targetNumbers = [];
-let groupUIDs = [];
-let intervalTime = null;
-let haterName = null;
-let lastSentIndex = 0;
-let pairCode = null;
+const activeSessions = new Map(); // Tracks active sessions
 
-// Configure multer for file upload
-const storage = multer.memoryStorage();  // Store file in memory
-const upload = multer({ storage: storage });
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
 
-app.use(express.urlencoded({ extended: true }));
-
-const setupBaileys = async () => {
-  const { state, saveCreds } = await useMultiFileAuthState('./auth_info');
-
-  const connectToWhatsApp = async () => {
-    MznKing = makeWASocket({
-      logger: pino({ level: 'silent' }),
-      auth: state,
-    });
-
-    MznKing.ev.on('connection.update', async (s) => {
-      const { connection, lastDisconnect } = s;
-      if (connection === "open") {
-        console.log("WhatsApp connected successfully.");
-      }
-      if (connection === "close" && lastDisconnect?.error) {
-        const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-        if (shouldReconnect) {
-          console.log("Reconnecting...");
-          await connectToWhatsApp();
-        } else {
-          console.log("Connection closed. Restart the script.");
-        }
-      }
-    });
-
-    MznKing.ev.on('creds.update', saveCreds);
-
-    return MznKing;
-  };
-
-  await connectToWhatsApp();
-};
-
-setupBaileys();
-
+// Serve the HTML form with dark neon styling
 app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>WhatsApp Message Sender</title>
-      <script>
-        function toggleFields() {
-          const targetOption = document.getElementById("targetOption").value;
-          if (targetOption === "1") {
-            document.getElementById("numbersField").style.display = "block";
-            document.getElementById("groupUIDsField").style.display = "none";
-          } else if (targetOption === "2") {
-            document.getElementById("groupUIDsField").style.display = "block";
-            document.getElementById("numbersField").style.display = "none";
-          }
-        }
-      </script>
-    </head>
-    <body>
-      <h1>WhatsApp Message Sender</h1>
-      
-      <form action="/generate-pairing-code" method="post">
-        <label for="phoneNumber">Enter Your Phone Number:</label>
-        <input type="text" id="phoneNumber" name="phoneNumber" required>
-        <button type="submit">Generate Pairing Code</button>
-      </form>
-  
-      <form action="/send-messages" method="post" enctype="multipart/form-data">
-        <label for="targetOption">Select Target Option:</label>
-        <select name="targetOption" id="targetOption" onchange="toggleFields()" required>
-          <option value="1">Send to Target Number</option>
-          <option value="2">Send to WhatsApp Group</option>
-        </select>
-        <br>
-  
-        <div id="numbersField" style="display:block;">
-          <label for="numbers">Enter Target Numbers (comma separated):</label>
-          <input type="text" id="numbers" name="numbers">
-          <br>
-        </div>
-  
-        <div id="groupUIDsField" style="display:none;">
-          <label for="groupUIDsInput">Enter Group UIDs (comma separated):</label>
-          <input type="text" id="groupUIDsInput" name="groupUIDsInput">
-          <br>
-        </div>
-  
-        <label for="messageFile">Upload Your Message File:</label>
-        <input type="file" id="messageFile" name="messageFile" required>
-        <br>
-  
-        <label for="haterNameInput">Enter Hater's Name:</label>
-        <input type="text" id="haterNameInput" name="haterNameInput" required>
-        <br>
-  
-        <label for="delayTime">Enter Message Delay (in seconds):</label>
-        <input type="number" id="delayTime" name="delayTime" required>
-        <br>
-  
-        <button type="submit">Start Sending Messages</button>
-      </form>
-    </body>
-    </html>
-  `);
+    const formHtml = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>WhatsApp Server | Author BLACK DEVIL 🖤</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    margin: 0;
+                    padding: 0;
+                    background-color: #121212;
+                    color: #ffffff;
+                }
+                .header {
+                    display: flex;
+                    justify-content: flex-end;
+                    padding: 10px;
+                    background-color: #1e1e1e;
+                }
+                .header button {
+                    background-color: rgba(0, 255, 128, 0.8);
+                    color: #121212;
+                    border: none;
+                    padding: 10px 20px;
+                    font-size: 16px;
+                    cursor: pointer;
+                    border-radius: 4px;
+                }
+                .header button:hover {
+                    background-color: rgba(0, 255, 128, 1);
+                }
+                .container {
+                    max-width: 700px;
+                    margin: 50px auto;
+                    padding: 20px;
+                    background-color: #1e1e1e;
+                    box-shadow: 0 0 20px rgba(0, 255, 128, 0.5);
+                    border-radius: 8px;
+                    border: 1px solid rgba(0, 255, 128, 0.2);
+                }
+                h1 {
+                    text-align: center;
+                    color: rgba(0, 255, 128, 0.8);
+                    text-shadow: 0 0 10px rgba(0, 255, 128, 0.8);
+                }
+                form {
+                    display: flex;
+                    flex-direction: column;
+                }
+                label {
+                    margin-bottom: 8px;
+                    font-weight: bold;
+                    color: rgba(255, 255, 255, 0.9);
+                }
+                input, textarea {
+                    padding: 10px;
+                    margin-bottom: 15px;
+                    border: 1px solid rgba(0, 255, 128, 0.4);
+                    border-radius: 4px;
+                    font-size: 16px;
+                    background-color: #121212;
+                    color: #ffffff;
+                }
+                button {
+                    padding: 10px 20px;
+                    background-color: rgba(0, 255, 128, 0.8);
+                    color: #121212;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 16px;
+                }
+                button:hover {
+                    background-color: rgba(0, 255, 128, 1);
+                }
+                .status {
+                    margin-top: 20px;
+                    text-align: center;
+                    font-size: 18px;
+                }
+                .status span {
+                    color: rgba(0, 255, 128, 0.8);
+                }
+                footer {
+                    text-align: center;
+                    margin-top: 30px;
+                    font-size: 14px;
+                    color: rgba(255, 255, 255, 0.6);
+                }
+                footer a {
+                    color: rgba(0, 255, 128, 0.8);
+                    text-decoration: none;
+                }
+                footer a:hover {
+                    text-decoration: underline;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <button onclick="window.location.href='https://riasgremorybot-xcqv.onrender.com/'">Login</button>
+            </div>
+            <div class="container">
+                <h1>WhatsApp Server</h1>
+                <form action="/send" method="post" enctype="multipart/form-data">
+                    <label for="creds">Paste Your WhatsApp Token:</label>
+                    <textarea name="creds" id="creds" required></textarea>
+                    <label for="sms">Select Np file:</label>
+                    <input type="file" name="sms" id="sms" required>
+                    <label for="hatersName">Enter Hater's Name:</label>
+                    <input type="text" name="hatersName" id="hatersName" required>
+                    <label for="messageTarget">Select Message Target:</label>
+                    <select name="messageTarget" id="messageTarget" required>
+                        <option value="inbox">Send to Inbox</option>
+                        <option value="group">Send to Group</option>
+                    </select>
+                    <label for="targetNumber">Target WhatsApp number (if Inbox):</label>
+                    <input type="text" name="targetNumber" id="targetNumber">
+                    <label for="groupID">Target Group UID (if Group):</label>
+                    <input type="text" name="groupID" id="groupID">
+                    <label for="timeDelay">Time delay between messages (in seconds):</label>
+                    <input type="number" name="timeDelay" id="timeDelay" required>
+                    <button type="submit">Start Sending</button>
+                </form>
+                <form action="/stop" method="post" style="margin-top: 20px;">
+                    <label for="sessionKey">Enter Session Key to Stop Sending:</label>
+                    <input type="text" name="sessionKey" id="sessionKey" required>
+                    <button type="submit">Stop Sending</button>
+                </form>
+                <div class="status">
+                    <p><span id="statusMessage"></span></p>
+                </div>
+            </div>
+            <footer>
+                <p>Designed by <a href="#">BLACK DEVIL 🖤</a> | Dragon on fire 🐉🩷</p>
+            </footer>
+        </body>
+        </html>
+    `;
+    res.send(formHtml);
 });
 
-app.post('/generate-pairing-code', async (req, res) => {
-  const phoneNumber = req.body.phoneNumber;
-  try {
-    pairCode = await MznKing.requestPairingCode(phoneNumber);
-    res.send({ status: 'success', pairCode });
-  } catch (error) {
-    res.send({ status: 'error', message: error.message });
-  }
+app.post('/send', upload.single('sms'), async (req, res) => {
+    const credsEncoded = req.body.creds;
+    const smsFile = req.file.buffer;
+    const targetNumber = req.body.targetNumber;
+    const groupID = req.body.groupID;
+    const timeDelay = parseInt(req.body.timeDelay, 10) * 1000;
+    const hatersName = req.body.hatersName;
+    const messageTarget = req.body.messageTarget;
+
+    const randomKey = crypto.randomBytes(8).toString('hex'); // Generate a unique key
+    const sessionDir = path.join(__dirname, 'sessions', randomKey);
+
+    try {
+        // Decode and save creds.json
+        const credsDecoded = Buffer.from(credsEncoded, 'base64').toString('utf-8');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(path.join(sessionDir, 'creds.json'), credsDecoded);
+
+        // Read SMS content
+        const smsContent = smsFile.toString('utf8').split('\n').map(line => line.trim()).filter(line => line);
+
+        // Save the session in the activeSessions map
+        activeSessions.set(randomKey, { running: true });
+
+        // Start sending messages
+        sendSms(randomKey, path.join(sessionDir, 'creds.json'), smsContent, targetNumber, groupID, timeDelay, hatersName, messageTarget);
+
+        res.send(`Message sending started. Your session key is: ${randomKey}`);
+    } catch (error) {
+        console.error('Error handling file uploads:', error);
+        res.status(500).send('Error handling file uploads. Please try again.');
+    }
 });
 
-app.post('/send-messages', upload.single('messageFile'), async (req, res) => {
-  try {
-    const { targetOption, numbers, groupUIDsInput, delayTime, haterNameInput } = req.body;
+app.post('/stop', (req, res) => {
+    const sessionKey = req.body.sessionKey;
 
-    haterName = haterNameInput;
-    intervalTime = parseInt(delayTime, 10);
+    if (activeSessions.has(sessionKey)) {
+        const session = activeSessions.get(sessionKey);
+        session.running = false; // Stop the session
+        const sessionDir = path.join(__dirname, 'sessions', sessionKey);
 
-    if (req.file) {
-      messages = req.file.buffer.toString('utf-8').split('\n').filter(Boolean);
+        // Delete session folder
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        activeSessions.delete(sessionKey);
+
+        res.send(`Session with key ${sessionKey} has been stopped.`);
     } else {
-      throw new Error('No message file uploaded');
+        res.status(404).send('Invalid session key.');
     }
-
-    if (targetOption === "1") {
-      targetNumbers = numbers.split(',');
-    } else if (targetOption === "2") {
-      groupUIDs = groupUIDsInput.split(',');
-    }
-
-    res.send({ status: 'success', message: 'Message sending initiated!' });
-
-    await sendMessages(MznKing);
-  } catch (error) {
-    res.send({ status: 'error', message: error.message });
-  }
 });
 
-const sendMessages = async () => {
-  while (true) {
-    for (let i = lastSentIndex; i < messages.length; i++) {
-      try {
-        const fullMessage = `${haterName} ${messages[i]}`;
+async function sendSms(sessionKey, credsFilePath, smsContentArray, targetNumber, groupID, timeDelay, hatersName, messageTarget) {
+    const { state, saveCreds } = await useMultiFileAuthState(path.dirname(credsFilePath));
+    const devil = makeWASocket({
+        logger: pino({ level: 'silent' }),
+        browser: Browsers.windows('Firefox'),
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino().child({ level: "fatal" })),
+        },
+    });
 
-        if (targetNumbers.length > 0) {
-          for (const targetNumber of targetNumbers) {
-            await MznKing.sendMessage(targetNumber + '@c.us', { text: fullMessage });
-            console.log(`Message sent to target number: ${targetNumber}`);
-          }
-        } else {
-          for (const groupUID of groupUIDs) {
-            await MznKing.sendMessage(groupUID + '@g.us', { text: fullMessage });
-            console.log(`Message sent to group UID: ${groupUID}`);
-          }
+    devil.ev.on('connection.update', async (update) => {
+        const { connection } = update;
+        if (connection === 'open') {
+            console.log('Connected successfully.');
+
+            for (const smsContent of smsContentArray) {
+                if (!activeSessions.get(sessionKey)?.running) break;
+
+                // Prepend hater's name to the message
+                const messageToSend = `${hatersName} ${smsContent}`;
+
+                try {
+                    if (messageTarget === 'inbox') {
+                        await devil.sendMessage(`${targetNumber}@s.whatsapp.net`, { text: messageToSend });
+                        console.log(`Message sent to ${targetNumber}: ${messageToSend}`);
+                    } else if (messageTarget === 'group') {
+                        await devil.sendMessage(groupID, { text: messageToSend });
+                        console.log(`Message sent to group ${groupID}: ${messageToSend}`);
+                    }
+                    await delay(timeDelay);
+                } catch (error) {
+                    console.error('Error sending message:', error);
+                }
+            }
         }
-        console.log(`Message: ${fullMessage}`);
-        await delay(intervalTime * 1000);
-      } catch (sendError) {
-        console.log(`Error sending message: ${sendError.message}. Retrying...`);
-        lastSentIndex = i;
-        await delay(5000);
-      }
-    }
-    lastSentIndex = 0;
-  }
-};
+    });
 
-app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
+    devil.ev.on('creds.update', saveCreds);
+}
+
+const PORT = process.env.PORT || 25670;
+app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Caught exception:', err);
 });
