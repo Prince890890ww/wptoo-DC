@@ -1,265 +1,603 @@
-const express = require('express');
-const multer = require('multer');
-const pino = require('pino');
-const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
-const { default: makeWASocket, Browsers, delay, useMultiFileAuthState, makeCacheableSignalKeyStore } = require("@whiskeysockets/baileys");
-const NodeCache = require('node-cache');
-const bodyParser = require('body-parser');
+const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const pino = require("pino");
+const multer = require("multer");
+const {
+  default: Gifted_Tech,
+  useMultiFileAuthState,
+  delay,
+  makeCacheableSignalKeyStore,
+  Browsers,
+} = require("maher-zubair-baileys");
 
 const app = express();
-const upload = multer();
+const PORT = 5000;
 
-const activeSessions = new Map(); // Tracks active sessions
+// Create necessary directories
+if (!fs.existsSync("temp")) fs.mkdirSync("temp");
+if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
 
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
+const upload = multer({ dest: "uploads/" });
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static("public"));
 
-// Serve the HTML form with dark neon styling
-app.get('/', (req, res) => {
-    const formHtml = `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>WhatsApp Server | Author BLACK DEVIL 🖤</title>
-            <style>
-                body {
-                    font-family: Arial, sans-serif;
-                    margin: 0;
-                    padding: 0;
-                    background-color: #121212;
-                    color: #ffffff;
-                }
-                .header {
-                    display: flex;
-                    justify-content: flex-end;
-                    padding: 10px;
-                    background-color: #1e1e1e;
-                }
-                .header button {
-                    background-color: rgba(0, 255, 128, 0.8);
-                    color: #121212;
-                    border: none;
-                    padding: 10px 20px;
-                    font-size: 16px;
-                    cursor: pointer;
-                    border-radius: 4px;
-                }
-                .header button:hover {
-                    background-color: rgba(0, 255, 128, 1);
-                }
-                .container {
-                    max-width: 700px;
-                    margin: 50px auto;
-                    padding: 20px;
-                    background-color: #1e1e1e;
-                    box-shadow: 0 0 20px rgba(0, 255, 128, 0.5);
-                    border-radius: 8px;
-                    border: 1px solid rgba(0, 255, 128, 0.2);
-                }
-                h1 {
-                    text-align: center;
-                    color: rgba(0, 255, 128, 0.8);
-                    text-shadow: 0 0 10px rgba(0, 255, 128, 0.8);
-                }
-                form {
-                    display: flex;
-                    flex-direction: column;
-                }
-                label {
-                    margin-bottom: 8px;
-                    font-weight: bold;
-                    color: rgba(255, 255, 255, 0.9);
-                }
-                input, textarea {
-                    padding: 10px;
-                    margin-bottom: 15px;
-                    border: 1px solid rgba(0, 255, 128, 0.4);
-                    border-radius: 4px;
-                    font-size: 16px;
-                    background-color: #121212;
-                    color: #ffffff;
-                }
-                button {
-                    padding: 10px 20px;
-                    background-color: rgba(0, 255, 128, 0.8);
-                    color: #121212;
-                    border: none;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-size: 16px;
-                }
-                button:hover {
-                    background-color: rgba(0, 255, 128, 1);
-                }
-                .status {
-                    margin-top: 20px;
-                    text-align: center;
-                    font-size: 18px;
-                }
-                .status span {
-                    color: rgba(0, 255, 128, 0.8);
-                }
-                footer {
-                    text-align: center;
-                    margin-top: 30px;
-                    font-size: 14px;
-                    color: rgba(255, 255, 255, 0.6);
-                }
-                footer a {
-                    color: rgba(0, 255, 128, 0.8);
-                    text-decoration: none;
-                }
-                footer a:hover {
-                    text-decoration: underline;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <button onclick="window.location.href='https://riasgremorybot-xcqv.onrender.com/'">Login</button>
-            </div>
-            <div class="container">
-                <h1>WhatsApp Server</h1>
-                <form action="/send" method="post" enctype="multipart/form-data">
-                    <label for="creds">Paste Your WhatsApp Token:</label>
-                    <textarea name="creds" id="creds" required></textarea>
-                    <label for="sms">Select Np file:</label>
-                    <input type="file" name="sms" id="sms" required>
-                    <label for="hatersName">Enter Hater's Name:</label>
-                    <input type="text" name="hatersName" id="hatersName" required>
-                    <label for="messageTarget">Select Message Target:</label>
-                    <select name="messageTarget" id="messageTarget" required>
-                        <option value="inbox">Send to Inbox</option>
-                        <option value="group">Send to Group</option>
-                    </select>
-                    <label for="targetNumber">Target WhatsApp number (if Inbox):</label>
-                    <input type="text" name="targetNumber" id="targetNumber">
-                    <label for="groupID">Target Group UID (if Group):</label>
-                    <input type="text" name="groupID" id="groupID">
-                    <label for="timeDelay">Time delay between messages (in seconds):</label>
-                    <input type="number" name="timeDelay" id="timeDelay" required>
-                    <button type="submit">Start Sending</button>
-                </form>
-                <form action="/stop" method="post" style="margin-top: 20px;">
-                    <label for="sessionKey">Enter Session Key to Stop Sending:</label>
-                    <input type="text" name="sessionKey" id="sessionKey" required>
-                    <button type="submit">Stop Sending</button>
-                </form>
-                <div class="status">
-                    <p><span id="statusMessage"></span></p>
-                </div>
-            </div>
-            <footer>
-                <p>Designed by <a href="#">BLACK DEVIL 🖤</a> | Dragon on fire 🐉🩷</p>
-            </footer>
-        </body>
-        </html>
-    `;
-    res.send(formHtml);
-});
+// Store active sessions
+const activeSessions = new Map();
 
-app.post('/send', upload.single('sms'), async (req, res) => {
-    const credsEncoded = req.body.creds;
-    const smsFile = req.file.buffer;
-    const targetNumber = req.body.targetNumber;
-    const groupID = req.body.groupID;
-    const timeDelay = parseInt(req.body.timeDelay, 10) * 1000;
-    const hatersName = req.body.hatersName;
-    const messageTarget = req.body.messageTarget;
-
-    const randomKey = crypto.randomBytes(8).toString('hex'); // Generate a unique key
-    const sessionDir = path.join(__dirname, 'sessions', randomKey);
-
-    try {
-        // Decode and save creds.json
-        const credsDecoded = Buffer.from(credsEncoded, 'base64').toString('utf-8');
-        fs.mkdirSync(sessionDir, { recursive: true });
-        fs.writeFileSync(path.join(sessionDir, 'creds.json'), credsDecoded);
-
-        // Read SMS content
-        const smsContent = smsFile.toString('utf8').split('\n').map(line => line.trim()).filter(line => line);
-
-        // Save the session in the activeSessions map
-        activeSessions.set(randomKey, { running: true });
-
-        // Start sending messages
-        sendSms(randomKey, path.join(sessionDir, 'creds.json'), smsContent, targetNumber, groupID, timeDelay, hatersName, messageTarget);
-
-        res.send(`Message sending started. Your session key is: ${randomKey}`);
-    } catch (error) {
-        console.error('Error handling file uploads:', error);
-        res.status(500).send('Error handling file uploads. Please try again.');
-    }
-});
-
-app.post('/stop', (req, res) => {
-    const sessionKey = req.body.sessionKey;
-
-    if (activeSessions.has(sessionKey)) {
-        const session = activeSessions.get(sessionKey);
-        session.running = false; // Stop the session
-        const sessionDir = path.join(__dirname, 'sessions', sessionKey);
-
-        // Delete session folder
-        fs.rmSync(sessionDir, { recursive: true, force: true });
-        activeSessions.delete(sessionKey);
-
-        res.send(`Session with key ${sessionKey} has been stopped.`);
-    } else {
-        res.status(404).send('Invalid session key.');
-    }
-});
-
-async function sendSms(sessionKey, credsFilePath, smsContentArray, targetNumber, groupID, timeDelay, hatersName, messageTarget) {
-    const { state, saveCreds } = await useMultiFileAuthState(path.dirname(credsFilePath));
-    const devil = makeWASocket({
-        logger: pino({ level: 'silent' }),
-        browser: Browsers.windows('Firefox'),
-        auth: {
-            creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, pino().child({ level: "fatal" })),
-        },
-    });
-
-    devil.ev.on('connection.update', async (update) => {
-        const { connection } = update;
-        if (connection === 'open') {
-            console.log('Connected successfully.');
-
-            for (const smsContent of smsContentArray) {
-                if (!activeSessions.get(sessionKey)?.running) break;
-
-                // Prepend hater's name to the message
-                const messageToSend = `${hatersName} ${smsContent}`;
-
-                try {
-                    if (messageTarget === 'inbox') {
-                        await devil.sendMessage(`${targetNumber}@s.whatsapp.net`, { text: messageToSend });
-                        console.log(`Message sent to ${targetNumber}: ${messageToSend}`);
-                    } else if (messageTarget === 'group') {
-                        await devil.sendMessage(groupID, { text: messageToSend });
-                        console.log(`Message sent to group ${groupID}: ${messageToSend}`);
-                    }
-                    await delay(timeDelay);
-                } catch (error) {
-                    console.error('Error sending message:', error);
-                }
+// Improved UI HTML
+const htmlTemplate = (additionalContent = "") => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Multi-User Sender</title>
+    <style>
+        :root {
+            --primary: #25D366;
+            --secondary: #128C7E;
+            --accent: #34B7F1;
+            --light: #f5f5f5;
+            --dark: #075E54;
+            --danger: #dc3545;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background-color: #f0f2f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, var(--secondary), var(--dark));
+            color: white;
+            padding: 20px 0;
+            text-align: center;
+            border-radius: 8px 8px 0 0;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1, h2, h3 {
+            margin-bottom: 15px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 25px;
+            margin-bottom: 30px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--dark);
+        }
+        
+        input, select, button, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        
+        input:focus, select:focus, textarea:focus {
+            border-color: var(--accent);
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(52, 183, 241, 0.2);
+        }
+        
+        button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        button:hover {
+            background-color: var(--secondary);
+        }
+        
+        .btn-danger {
+            background-color: var(--danger);
+        }
+        
+        .btn-danger:hover {
+            background-color: #c82333;
+        }
+        
+        .session-list {
+            margin-top: 30px;
+        }
+        
+        .session-item {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .session-info {
+            flex: 1;
+        }
+        
+        .session-actions {
+            margin-left: 15px;
+        }
+        
+        .status-connected {
+            color: var(--primary);
+            font-weight: bold;
+        }
+        
+        .status-disconnected {
+            color: var(--danger);
+            font-weight: bold;
+        }
+        
+        .message-log {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 6px;
+            background-color: #f9f9f9;
+            margin-top: 10px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .log-time {
+            color: #666;
+            font-size: 12px;
+            margin-right: 10px;
+        }
+        
+        .log-message {
+            color: #333;
+        }
+        
+        .flex-container {
+            display: flex;
+            gap: 20px;
+        }
+        
+        .flex-item {
+            flex: 1;
+        }
+        
+        @media (max-width: 768px) {
+            .flex-container {
+                flex-direction: column;
             }
         }
-    });
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>WhatsApp Multi-User Message Sender</h1>
+            <p>Send messages to multiple recipients with individual sessions</p>
+        </header>
+        
+        ${additionalContent}
+    </div>
+</body>
+</html>
+`;
 
-    devil.ev.on('creds.update', saveCreds);
+// Home route
+app.get("/", (req, res) => {
+    const content = `
+        <div class="flex-container">
+            <div class="flex-item">
+                <div class="card">
+                    <h2>Create New Session</h2>
+                    <form action="/code" method="GET">
+                        <div class="form-group">
+                            <label for="number">WhatsApp Number</label>
+                            <input type="text" id="number" name="number" placeholder="e.g. 918708206094" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="sessionName">Session Name (Optional)</label>
+                            <input type="text" id="sessionName" name="sessionName" placeholder="My Business Account">
+                        </div>
+                        <button type="submit">Generate Pairing Code</button>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="flex-item">
+                <div class="card">
+                    <h2>Send Messages</h2>
+                    <form action="/send-message" method="POST" enctype="multipart/form-data">
+                        <div class="form-group">
+                            <label for="taskId">Session/Task ID</label>
+                            <input type="text" id="taskId" name="taskId" placeholder="Enter your session ID" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="targetType">Target Type</label>
+                            <select id="targetType" name="targetType" required>
+                                <option value="">-- Select Target Type --</option>
+                                <option value="number">Phone Number</option>
+                                <option value="group">Group ID</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="target">Target</label>
+                            <input type="text" id="target" name="target" placeholder="Phone number or Group ID" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="messageFile">Message File (TXT)</label>
+                            <input type="file" id="messageFile" name="messageFile" accept=".txt" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="delaySec">Delay Between Messages (seconds)</label>
+                            <input type="number" id="delaySec" name="delaySec" min="1" value="5" required>
+                        </div>
+                        <button type="submit">Start Sending</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card session-list">
+            <h2>Active Sessions</h2>
+            ${Array.from(activeSessions.entries()).map(([id, session]) => `
+                <div class="session-item">
+                    <div class="session-info">
+                        <h3>${session.name || 'Unnamed Session'} (ID: ${id})</h3>
+                        <p>Number: ${session.number}</p>
+                        <p>Status: <span class="status-connected">Connected</span></p>
+                        <div class="message-log">
+                            ${session.logs.slice(-5).map(log => `
+                                <div class="log-entry">
+                                    <span class="log-time">${new Date(log.time).toLocaleTimeString()}</span>
+                                    <span class="log-message">${log.message}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <div class="session-actions">
+                        <form action="/stop-session" method="POST" style="margin-bottom: 10px;">
+                            <input type="hidden" name="taskId" value="${id}">
+                            <button type="submit" class="btn-danger">Stop Session</button>
+                        </form>
+                    </div>
+                </div>
+            `).join('') || '<p>No active sessions</p>'}
+        </div>
+    `;
+    
+    res.send(htmlTemplate(content));
+});
+
+// Generate pairing code
+app.get("/code", async (req, res) => {
+    const { number, sessionName } = req.query;
+    if (!number) {
+        return res.send(htmlTemplate(`
+            <div class="card">
+                <h2>Error</h2>
+                <p>Phone number is required</p>
+                <a href="/">Go back</a>
+            </div>
+        `));
+    }
+
+    const taskId = Math.random().toString(36).substring(2, 10);
+    const tempPath = path.join("temp", taskId);
+
+    if (!fs.existsSync(tempPath)) {
+        fs.mkdirSync(tempPath, { recursive: true });
+    }
+
+    const cleanNumber = number.replace(/[^0-9]/g, "");
+    
+    try {
+        const { state, saveCreds } = await useMultiFileAuthState(tempPath);
+        
+        const logger = pino({ level: "fatal" }).child({ level: "fatal" });
+        
+        const client = Gifted_Tech({
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, logger),
+            },
+            printQRInTerminal: false,
+            logger: logger,
+            browser: Browsers.ubuntu("Chrome"),
+        });
+
+        if (!client.authState.creds.registered) {
+            await delay(1500);
+            const code = await client.requestPairingCode(cleanNumber);
+            
+            // Create new session
+            activeSessions.set(taskId, {
+                client,
+                number: cleanNumber,
+                name: sessionName || `Session ${taskId}`,
+                path: tempPath,
+                logs: [],
+                saveCreds,
+                state,
+                running: true
+            });
+            
+            // Add log function to session
+            activeSessions.get(taskId).log = (message) => {
+                const entry = {
+                    time: Date.now(),
+                    message: message
+                };
+                activeSessions.get(taskId).logs.push(entry);
+                console.log(`[${taskId}] ${message}`);
+            };
+
+            client.ev.on("creds.update", saveCreds);
+            
+            client.ev.on("connection.update", async (update) => {
+                const { connection, lastDisconnect } = update;
+                
+                if (connection === "open") {
+                    activeSessions.get(taskId).log("WhatsApp connected successfully");
+                    await delay(2000);
+                } 
+                else if (connection === "close") {
+                    if (lastDisconnect?.error?.output?.statusCode !== 401) {
+                        activeSessions.get(taskId).log("Connection lost, reconnecting...");
+                        await delay(10000);
+                        initializeClient(taskId);
+                    } else {
+                        activeSessions.get(taskId).log("Session terminated - authentication error");
+                        activeSessions.delete(taskId);
+                    }
+                }
+            });
+
+            return res.send(htmlTemplate(`
+                <div class="card">
+                    <h2>Pairing Code Generated</h2>
+                    <div style="font-size: 24px; margin: 20px 0; padding: 15px; background: #f0f8ff; border-radius: 5px;">
+                        Your Pairing Code: <strong>${code}</strong>
+                    </div>
+                    <p>Task ID: <code>${taskId}</code> (Save this to control your session)</p>
+                    <p>Number: ${cleanNumber}</p>
+                    <p>Session will automatically connect once paired.</p>
+                    <a href="/" class="btn">Return to Dashboard</a>
+                </div>
+            `));
+        }
+    } catch (error) {
+        console.error("Error generating pairing code:", error);
+        return res.send(htmlTemplate(`
+            <div class="card">
+                <h2>Error</h2>
+                <p>Failed to generate pairing code: ${error.message}</p>
+                <a href="/">Go back</a>
+            </div>
+        `));
+    }
+});
+
+// Initialize client (for reconnections)
+async function initializeClient(taskId) {
+    if (!activeSessions.has(taskId)) return;
+
+    const session = activeSessions.get(taskId);
+    
+    try {
+        const { state, saveCreds } = await useMultiFileAuthState(session.path);
+        
+        const logger = pino({ level: "fatal" }).child({ level: "fatal" });
+        
+        session.client = Gifted_Tech({
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, logger),
+            },
+            printQRInTerminal: false,
+            logger: logger,
+            browser: Browsers.ubuntu("Chrome"),
+        });
+
+        session.client.ev.on("creds.update", saveCreds);
+        
+        session.client.ev.on("connection.update", async (update) => {
+            const { connection, lastDisconnect } = update;
+            
+            if (connection === "open") {
+                session.log("Reconnected successfully");
+            } 
+            else if (connection === "close") {
+                if (lastDisconnect?.error?.output?.statusCode !== 401) {
+                    session.log("Reconnection failed, trying again...");
+                    await delay(15000);
+                    initializeClient(taskId);
+                } else {
+                    session.log("Session terminated - authentication error");
+                    activeSessions.delete(taskId);
+                }
+            }
+        });
+    } catch (error) {
+        session.log(`Reconnection error: ${error.message}`);
+        await delay(30000);
+        initializeClient(taskId);
+    }
 }
 
-const PORT = process.env.PORT || 25670;
-app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+// Send messages
+app.post("/send-message", upload.single("messageFile"), async (req, res) => {
+    const { taskId, target, targetType, delaySec } = req.body;
+    const filePath = req.file?.path;
+
+    if (!taskId || !target || !filePath || !delaySec) {
+        return res.send(htmlTemplate(`
+            <div class="card">
+                <h2>Error</h2>
+                <p>Missing required fields</p>
+                <a href="/">Go back</a>
+            </div>
+        `));
+    }
+
+    if (!activeSessions.has(taskId)) {
+        return res.send(htmlTemplate(`
+            <div class="card">
+                <h2>Error</h2>
+                <p>Invalid session ID or session not active</p>
+                <a href="/">Go back</a>
+            </div>
+        `));
+    }
+
+    const session = activeSessions.get(taskId);
+    
+    try {
+        const messages = fs.readFileSync(filePath, "utf-8")
+            .split("\n")
+            .filter(msg => msg.trim() !== "");
+        
+        if (messages.length === 0) {
+            return res.send(htmlTemplate(`
+                <div class="card">
+                    <h2>Error</h2>
+                    <p>Message file is empty</p>
+                    <a href="/">Go back</a>
+                </div>
+            `));
+        }
+
+        const recipient = targetType === "group" ? target + "@g.us" : target + "@s.whatsapp.net";
+        let index = 0;
+        
+        session.log(`Started sending messages to ${recipient}`);
+        
+        // Start sending in background
+        (async () => {
+            while (session.running) {
+                const msg = messages[index];
+                
+                try {
+                    await session.client.sendMessage(recipient, { text: msg });
+                    session.log(`Sent to ${target}: ${msg.substring(0, 50)}${msg.length > 50 ? '...' : ''}`);
+                } catch (error) {
+                    session.log(`Error sending message: ${error.message}`);
+                    await delay(5000);
+                    continue;
+                }
+                
+                index = (index + 1) % messages.length;
+                await delay(parseInt(delaySec) * 1000);
+            }
+        })();
+
+        return res.send(htmlTemplate(`
+            <div class="card">
+                <h2>Message Sending Started</h2>
+                <p>Messages are now being sent to ${target} (${targetType})</p>
+                <p>Delay: ${delaySec} seconds between messages</p>
+                <p>Total messages: ${messages.length}</p>
+                <p>Task ID: <code>${taskId}</code></p>
+                <div class="message-log">
+                    ${session.logs.slice(-5).map(log => `
+                        <div class="log-entry">
+                            <span class="log-time">${new Date(log.time).toLocaleTimeString()}</span>
+                            <span class="log-message">${log.message}</span>
+                        </div>
+                    `).join('')}
+                </div>
+                <a href="/">Return to Dashboard</a>
+            </div>
+        `));
+    } catch (error) {
+        session.log(`Error in message sending: ${error.message}`);
+        return res.send(htmlTemplate(`
+            <div class="card">
+                <h2>Error</h2>
+                <p>Failed to start message sending: ${error.message}</p>
+                <a href="/">Go back</a>
+            </div>
+        `));
+    } finally {
+        if (filePath && fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+    }
 });
 
-process.on('uncaughtException', (err) => {
-    console.error('Caught exception:', err);
+// Stop session
+app.post("/stop-session", async (req, res) => {
+    const { taskId } = req.body;
+    
+    if (!taskId || !activeSessions.has(taskId)) {
+        return res.send(htmlTemplate(`
+            <div class="card">
+                <h2>Error</h2>
+                <p>Invalid session ID</p>
+                <a href="/">Go back</a>
+            </div>
+        `));
+    }
+    
+    const session = activeSessions.get(taskId);
+    session.running = false;
+    
+    try {
+        await session.client?.ws?.close();
+        session.log("Session stopped by user");
+    } catch (error) {
+        console.error("Error stopping session:", error);
+    }
+    
+    activeSessions.delete(taskId);
+    
+    return res.send(htmlTemplate(`
+        <div class="card">
+            <h2>Session Stopped</h2>
+            <p>Session ${taskId} has been stopped</p>
+            <a href="/">Return to Dashboard</a>
+        </div>
+    `));
 });
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
