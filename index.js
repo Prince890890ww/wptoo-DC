@@ -127,7 +127,7 @@ app.get('/', (req, res) => {
   `);
 });
 
-app.post('// Generate pairing code
+app.post('/ Generate pairing code
 app.get("/code", async (req, res) => {
     const { number, sessionName } = req.query;
     if (!number) {
@@ -194,8 +194,6 @@ const sendMessages = async () => {
     }
     lastSentIndex = 0;
   }
-};
-  
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
